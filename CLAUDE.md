@@ -169,6 +169,55 @@ Expected template shape (fill per sub-account):
 
 ---
 
+## MCP Field-Access Patterns
+
+Discovered empirically during Phase 3 seed-contact creation. These are MCP-server behaviors, not visible in the tool schemas — document here so the agent doesn't re-learn them on every sub-account.
+
+### Write path (setting custom field values)
+
+Use `mcp__ghl-mcp__contacts_update-contact`. The `body_customFields` parameter takes an **array of raw JSON object literals**, despite the MCP schema declaring `items: string`:
+
+```
+body_customFields: [
+  {"id": "<fieldId>", "field_value": "<value>"},
+  {"id": "<fieldId>", "field_value": "<value>"}
+]
+```
+
+- Key is `field_value` (singular, scalar).
+- Do NOT stringify the objects. The server accepts raw object literals; stringified JSON is silently dropped.
+
+### Read path (getting custom field values)
+
+Use `mcp__ghl-mcp__contacts_get-contact`. The response returns `customFields` with a **different shape than the write payload**:
+
+```
+"customFields": [
+  {"id": "<fieldId>", "value": ["<value>"]}
+]
+```
+
+- Key is `value` (NOT `field_value`).
+- `MULTIPLE_OPTIONS` fields (e.g. Age `EMOPV3ntINbQyE6iST86`, Coverage `vcIddL5etIeOwPgE3wav`) return **arrays** even when only one option is selected.
+- **Always unwrap:** `customFields[n].value[0]`.
+- A field that was never set is **absent from the `customFields` array entirely** — not present with an empty value. Treat "field absent" as equivalent to "value is empty".
+
+### Create limitation
+
+`mcp__ghl-mcp__contacts_create-contact` **silently drops** `body_customFields` at create time, regardless of shape. Do NOT attempt to set custom fields at create. Required pattern:
+
+1. `contacts_create-contact` — standard fields only (name, email, phone, tags, source, country).
+2. Capture the returned `contactId`.
+3. `contacts_update-contact` with `path_contactId` + `body_customFields` in the write shape above.
+
+### Opportunity limitation
+
+There is **no `opportunities_create-opportunity` tool** in the GHL MCP surface. Available opportunity tools: `get-opportunity`, `get-pipelines`, `search-opportunity`, `update-opportunity`.
+
+**Implication:** the agent cannot place a contact into a pipeline stage via MCP. When the Phase 3 workflow requires a contact to be in `New Lead` of Pipeline A, opportunity creation must happen out-of-band — either manually in the GHL UI, or via a GHL automation workflow (e.g., "on contact tag `seed-test` added, create opportunity in Pipeline A / New Lead").
+
+---
+
 ## Safety rules (HARD — agent MUST NOT violate without explicit human override in chat)
 
 1. **Never delete** a contact, opportunity, pipeline, stage, tag, custom field, or calendar.
@@ -243,7 +292,17 @@ This is the **only** workflow the agent runs end-to-end right now. Everything el
 ### Qualification logic
 
 ```
-read contact → inspect Age and Coverage:
+read contact via mcp__ghl-mcp__contacts_get-contact:
+
+  # Field reads — unwrap the MULTIPLE_OPTIONS array wrapper.
+  # See the MCP Field-Access Patterns section above. A field absent from
+  # the customFields array, or present with an empty value array,
+  # resolves to the empty string "".
+  age_entry      = customFields entry where id == "EMOPV3ntINbQyE6iST86"   # Age
+  coverage_entry = customFields entry where id == "vcIddL5etIeOwPgE3wav"   # How Much Coverage Do You Need?
+
+  Age      = age_entry.value[0]      if age_entry      exists AND age_entry.value      is a non-empty array  else ""
+  Coverage = coverage_entry.value[0] if coverage_entry exists AND coverage_entry.value is a non-empty array  else ""
 
   if Age == "Under 18":
     → tag `minor-ineligible`
@@ -251,7 +310,7 @@ read contact → inspect Age and Coverage:
     → notify operator (Tier: Notify)
     → stop
 
-  if Age is empty OR Coverage is empty OR Coverage == "Not Sure":
+  if Age == "" OR Coverage == "" OR Coverage == "Not Sure":
     → tag `needs-qualification`
     → DO NOT move stage
     → notify operator with which field(s) are missing (Tier: Notify)
@@ -317,6 +376,7 @@ Next step suggestion for operator: <one line>
 - Cooldown / daily-cap operational limits.
 - Conventions (tag naming, date format, smart-quote handling).
 - Structural note that all deal data lives on the contact (no opportunity fields) — verify per clone, but this is how the snapshot is built.
+- **MCP Field-Access Patterns (entire section)** — these describe MCP-server behavior, not per-sub-account data, so they carry over unchanged. Re-verify only on major GHL or MCP-server upgrades.
 
 ### Cloning checklist (run this every time)
 - [ ] Call `mcp__ghl-mcp__locations_get-location` → replace the Location block.
