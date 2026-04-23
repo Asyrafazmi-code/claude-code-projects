@@ -344,7 +344,7 @@ read contact via mcp__ghl-mcp__contacts_get-contact:
 Lead: <first name> <last name> (<contact id>)
 Age: <value or MISSING>
 Coverage: <value or MISSING>
-Decision: <qualified-lead | needs-qualification | minor-ineligible>
+Decision: <qualified-lead | needs-qualification | minor-ineligible | senior-specialty>
 Actions taken:
   - Tags applied: <list>
   - Stage move: <from → to, or "none">
